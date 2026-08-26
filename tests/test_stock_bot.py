@@ -15,6 +15,14 @@ def sample_stock() -> Stock:
     return Stock("חברה לדוגמה", "DEMO", "TASE", "₪", "DEMO")
 
 
+def test_derived_state_key_is_valid_and_stable(monkeypatch) -> None:
+    monkeypatch.delenv("STATE_ENCRYPTION_KEY", raising=False)
+    first = stock_bot.state_encryption_key("telegram-token")
+    second = stock_bot.state_encryption_key("telegram-token")
+    assert first == second
+    Fernet(first)
+
+
 def test_monitoring_window() -> None:
     assert stock_bot.is_monitoring_window(datetime(2026, 8, 26, 10, 0, tzinfo=TZ))
     assert stock_bot.is_monitoring_window(datetime(2026, 8, 28, 18, 0, tzinfo=TZ))
