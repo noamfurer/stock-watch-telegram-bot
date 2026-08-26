@@ -1,0 +1,56 @@
+name: Migrate encrypted subscriber state once
+
+on:
+  push:
+    paths:
+      - ".github/workflows/migrate-subscribers-once.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stock-monitor
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_SETUP_CODE: ${{ secrets.TELEGRAM_SETUP_CODE }}
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Migrate subscriber state
+        run: python stock_bot.py
+
+      - name: Persist encrypted subscriber state
+        if: always()
+        run: |
+          if [ ! -f runtime_state.enc ]; then
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runtime_state.enc
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Migrate encrypted subscriber state"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
