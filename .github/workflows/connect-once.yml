@@ -1,5 +1,7 @@
 name: Connect Telegram once
 
+# Connection retry 2
+
 on:
   push:
     paths:
