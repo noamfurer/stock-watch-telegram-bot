@@ -246,7 +246,7 @@ def format_alert(quote: Quote, threshold: float, now: datetime) -> str:
     local = now.astimezone(ISRAEL_TZ)
     return "\n".join(
         [
-            "🚨 <b>התראת מניה</b>",
+            f"🛎️ <b>{html.escape(stock.name)} - התראת מניה</b>",
             "",
             f"מניית <b>{html.escape(stock.name)}</b> ({html.escape(stock.display_symbol)}) {direction} ביותר מ-{threshold:.2f}%.",
             f"מחיר עדכני: {quote.price:.2f} {html.escape(stock.currency_symbol)}",
