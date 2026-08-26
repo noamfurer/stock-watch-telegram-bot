@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -86,6 +87,14 @@ def required_env(name: str) -> str:
 
 def optional_env(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def state_encryption_key(token: str) -> str:
+    explicit_key = optional_env("STATE_ENCRYPTION_KEY")
+    if explicit_key:
+        return explicit_key
+    digest = hashlib.sha256(token.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii")
 
 
 def load_watchlist(raw: str) -> list[Stock]:
@@ -350,7 +359,7 @@ def process_alerts(
 def main(now: datetime | None = None) -> int:
     now = now or datetime.now(tz=ISRAEL_TZ)
     token = required_env("TELEGRAM_BOT_TOKEN")
-    encryption_key = required_env("STATE_ENCRYPTION_KEY")
+    encryption_key = state_encryption_key(token)
     local_date = now.astimezone(ISRAEL_TZ).date().isoformat()
     state = load_state(encryption_key, local_date)
 
