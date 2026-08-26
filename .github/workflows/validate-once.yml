@@ -1,0 +1,40 @@
+name: Validate private market configuration
+
+on:
+  push:
+    paths:
+      - ".github/workflows/validate-once.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WATCHLIST_JSON: ${{ secrets.WATCHLIST_JSON }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate configured market data
+        run: |
+          python - <<'PY'
+          from stock_bot import fetch_quotes, load_watchlist, required_env
+          stocks = load_watchlist(required_env("WATCHLIST_JSON"))
+          quotes = fetch_quotes(stocks)
+          if len(quotes) != len(stocks):
+              raise RuntimeError(f"Incomplete market data: {len(quotes)}/{len(stocks)}")
+          print(f"Validated market data for {len(quotes)} configured instruments.")
+          PY
