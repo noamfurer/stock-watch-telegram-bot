@@ -1,0 +1,67 @@
+name: Send one-time alert example
+
+on:
+  push:
+    paths:
+      - ".github/workflows/send-alert-example-once.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  send-example:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Send clearly labeled example alert
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          from stock_bot import (
+              ISRAEL_TZ,
+              Quote,
+              Stock,
+              ensure_multiuser_state,
+              format_alert,
+              load_state,
+              required_env,
+              send_telegram,
+              state_encryption_key,
+          )
+
+          token = required_env("TELEGRAM_BOT_TOKEN")
+          now = datetime.now(ISRAEL_TZ)
+          state = load_state(state_encryption_key(token), now.date().isoformat())
+          ensure_multiuser_state(state, now)
+          admin_chat_id = str(state.get("admin_chat_id", "")).strip()
+          if not admin_chat_id:
+              raise RuntimeError("Administrator chat is not configured")
+
+          stock = Stock(
+              name="אשטרום",
+              symbol="ASHG",
+              exchange="TASE",
+              currency_symbol="₪",
+              display_symbol="ASHG",
+          )
+          quote = Quote(
+              stock=stock,
+              price=5200.00,
+              change=-379.00,
+              change_percent=-6.79,
+          )
+          message = (
+              "🧪 <b>דוגמת התראה בלבד</b>\n"
+              "הנתונים בהודעה זו נועדו להמחשה\n\n"
+              + format_alert(quote, 4.0, now)
+          )
+          send_telegram(token, admin_chat_id, message)
+          print("Sent one-time falling-stock alert example.")
+          PY
