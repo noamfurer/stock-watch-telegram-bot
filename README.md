@@ -5,8 +5,19 @@ Telegram bot that checks a private watchlist every 15 minutes during the configu
 - Full Hebrew reports at 11:00, 14:00 and 16:30 Israel time.
 - Immediate threshold-crossing alerts, with a default threshold of 4%.
 - A report layout matching the supplied Telegram example.
+- Private updates to every enabled subscriber.
 
-The repository can be public. The watchlist, alert threshold, bot token, chat ID and encryption key are stored only as GitHub Actions Secrets. The small runtime state committed by the workflow is encrypted and contains no readable ticker names.
+The repository can be public. The watchlist, alert threshold and bot token are stored only as GitHub Actions Secrets. Subscriber Telegram IDs, names, usernames, permissions and notification state are committed only as encrypted runtime data. The public repository contains no readable subscriber or ticker data.
+
+## Subscribers and administration
+
+- Anyone with the bot link can press `Start` and join with status `YES`.
+- A new subscriber receives a confirmation and the administrator receives a private notification.
+- The administrator can press inline `YES` or `NO` buttons to enable or block that subscriber.
+- A blocked subscriber remains encrypted in the registry but receives no reports or alerts.
+- Sending `/start` again does not bypass a `NO` status.
+- The administrator can send `/users` to receive the full encrypted registry as a private Telegram message with `YES` and `NO` controls.
+- Telegram updates are checked every 15 minutes, so joining and permission changes can take up to 15 minutes.
 
 ## Data sources
 
@@ -60,7 +71,7 @@ Changing `WATCHLIST_JSON` or `ALERT_THRESHOLD_PERCENT` changes the monitored com
 
 ## Schedule behavior
 
-GitHub Actions cron uses UTC, so the workflow starts every 15 minutes across a broad UTC window. The Python process applies `Asia/Jerusalem` and exits unless local time is Monday-Friday between 10:00 and 18:00. This automatically follows Israeli daylight-saving time.
+GitHub Actions runs every 15 minutes all day so subscriptions and permission buttons are processed throughout the week. The Python process requests market data and sends market notifications only when local time is Monday-Friday between 10:00 and 18:00 in `Asia/Jerusalem`. This automatically follows Israeli daylight-saving time.
 
 GitHub documents that scheduled workflows can occasionally start late. A report slot remains eligible for 90 minutes and encrypted state prevents duplicates.
 
