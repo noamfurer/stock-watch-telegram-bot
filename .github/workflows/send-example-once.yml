@@ -1,0 +1,105 @@
+name: Send one-time previous-session report
+
+on:
+  push:
+    paths:
+      - ".github/workflows/send-example-once.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      WATCHLIST_JSON: ${{ secrets.WATCHLIST_JSON }}
+      STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Send previous completed session report
+        run: |
+          python - <<'PY'
+          import time
+          from datetime import datetime
+
+          import requests
+
+          from stock_bot import (
+              ISRAEL_TZ,
+              Quote,
+              ensure_multiuser_state,
+              format_report,
+              load_state,
+              load_watchlist,
+              required_env,
+              send_telegram,
+              state_encryption_key,
+          )
+
+          def previous_completed_quote(stock, session):
+              response = session.get(
+                  f"https://query1.finance.yahoo.com/v8/finance/chart/{stock.yahoo_symbol}",
+                  params={"interval": "1d", "range": "10d"},
+                  headers={"User-Agent": "Mozilla/5.0 stock-monitor/1.0"},
+                  timeout=20,
+              )
+              response.raise_for_status()
+              result = response.json().get("chart", {}).get("result") or []
+              if not result:
+                  return None
+              chart = result[0]
+              meta = chart.get("meta", {})
+              timestamps = chart.get("timestamp") or []
+              closes = (((chart.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
+              sessions = [(timestamp, float(close)) for timestamp, close in zip(timestamps, closes) if close is not None]
+
+              regular = ((meta.get("currentTradingPeriod") or {}).get("regular") or {})
+              now_epoch = int(time.time())
+              market_is_open = int(regular.get("start") or 0) <= now_epoch < int(regular.get("end") or 0)
+              if market_is_open and len(sessions) >= 3:
+                  sessions = sessions[:-1]
+
+              if len(sessions) < 2:
+                  return None
+              price = sessions[-1][1]
+              previous = sessions[-2][1]
+              change = price - previous
+              percent = change / previous * 100 if previous else 0.0
+              return Quote(stock, price, change, percent)
+
+          token = required_env("TELEGRAM_BOT_TOKEN")
+          state = load_state(state_encryption_key(token), datetime.now(ISRAEL_TZ).date().isoformat())
+          ensure_multiuser_state(state, datetime.now(ISRAEL_TZ))
+          admin_chat_id = str(state.get("admin_chat_id", "")).strip()
+          if not admin_chat_id:
+              raise RuntimeError("Administrator chat is not configured")
+
+          stocks = load_watchlist(required_env("WATCHLIST_JSON"))
+          session = requests.Session()
+          quotes = []
+          for stock in stocks:
+              quote = previous_completed_quote(stock, session)
+              if quote:
+                  quotes.append(quote)
+              time.sleep(0.1)
+
+          if len(quotes) != len(stocks):
+              raise RuntimeError(f"Incomplete previous-session data: {len(quotes)}/{len(stocks)}")
+
+          now = datetime.now(ISRAEL_TZ)
+          message = (
+              "🧪 <b>דוגמה חד-פעמית</b>\n"
+              "מבוסס על יום המסחר האחרון שהושלם\n\n"
+              + format_report(quotes, now)
+          )
+          send_telegram(token, admin_chat_id, message)
+          print(f"Sent one-time report with {len(quotes)} instruments.")
+          PY
