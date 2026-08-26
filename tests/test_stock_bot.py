@@ -74,4 +74,59 @@ def test_chat_id_survives_daily_state_reset(tmp_path: Path, monkeypatch) -> None
     state = {"local_date": "2026-08-26", "reports_sent": ["11:00"], "alerts": {}, "chat_id": "12345"}
     stock_bot.save_state(key, state)
     loaded = stock_bot.load_state(key, "2026-08-27")
-    assert loaded == {"local_date": "2026-08-27", "reports_sent": [], "alerts": {}, "chat_id": "12345"}
+    assert loaded == {
+        "local_date": "2026-08-27",
+        "reports_sent": [],
+        "alerts": {},
+        "subscribers": {},
+        "update_offset": None,
+        "chat_id": "12345",
+    }
+
+
+def test_legacy_admin_is_migrated_to_encrypted_subscriber_list() -> None:
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=TZ)
+    state = {"chat_id": "12345", "subscribers": {}}
+    assert stock_bot.ensure_multiuser_state(state, now)
+    assert state["admin_chat_id"] == "12345"
+    assert state["subscribers"]["12345"]["enabled"] is True
+    assert "chat_id" not in state
+
+
+def test_new_subscriber_starts_enabled_and_block_cannot_be_bypassed() -> None:
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=TZ)
+    state = {"subscribers": {}}
+    message = {
+        "chat": {"id": 98765, "type": "private"},
+        "from": {"id": 98765, "username": "new_user", "first_name": "New", "last_name": "User"},
+    }
+    subscriber, is_new, changed = stock_bot.register_subscriber(state, message, now)
+    assert is_new and changed
+    assert subscriber and subscriber["enabled"] is True
+    assert stock_bot.set_subscriber_enabled(state, "98765", False)
+
+    subscriber, is_new, changed = stock_bot.register_subscriber(state, message, now)
+    assert not is_new and not changed
+    assert subscriber and subscriber["enabled"] is False
+    assert stock_bot.active_chat_ids(state) == []
+
+
+def test_admin_user_list_contains_yes_no_controls() -> None:
+    state = {
+        "subscribers": {
+            "98765": {
+                "chat_id": "98765",
+                "username": "new_user",
+                "first_name": "New",
+                "last_name": "User",
+                "enabled": True,
+                "joined_at": "2026-08-26T12:00:00+03:00",
+            }
+        }
+    }
+    message, markup = stock_bot.users_message(state)
+    assert "@new_user" in message
+    assert "YES" in message
+    buttons = markup["inline_keyboard"][0]
+    assert buttons[0]["callback_data"] == "subscriber:yes:98765"
+    assert buttons[1]["callback_data"] == "subscriber:no:98765"
