@@ -41,7 +41,10 @@ jobs:
 
       - name: Persist encrypted Telegram connection
         run: |
-          test -f runtime_state.enc
+          if [ ! -f runtime_state.enc ]; then
+            echo "No matching connection command yet."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add runtime_state.enc
