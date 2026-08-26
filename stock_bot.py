@@ -256,28 +256,56 @@ def format_alert(quote: Quote, threshold: float, now: datetime) -> str:
     )
 
 
-def send_telegram(token: str, chat_id: str, text: str) -> None:
+def send_telegram(
+    token: str,
+    chat_id: str,
+    text: str,
+    reply_markup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     response = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
+        json=payload,
         timeout=20,
     )
     response.raise_for_status()
+    return response.json()
+
+
+def answer_callback(token: str, callback_id: str, text: str) -> None:
+    response = requests.post(
+        f"https://api.telegram.org/bot{token}/answerCallbackQuery",
+        json={"callback_query_id": callback_id, "text": text},
+        timeout=20,
+    )
+    response.raise_for_status()
+
+
+def get_telegram_updates(token: str, offset: int | None) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {
+        "timeout": 0,
+        "allowed_updates": json.dumps(["message", "callback_query"]),
+    }
+    if offset is not None:
+        params["offset"] = offset
+    response = requests.get(
+        f"https://api.telegram.org/bot{token}/getUpdates",
+        params=params,
+        timeout=20,
+    )
+    response.raise_for_status()
+    return list(response.json().get("result", []))
 
 
 def discover_chat_id(token: str, setup_code: str) -> str | None:
-    response = requests.get(
-        f"https://api.telegram.org/bot{token}/getUpdates",
-        params={"timeout": 0, "allowed_updates": json.dumps(["message"])},
-        timeout=20,
-    )
-    response.raise_for_status()
-    for update in reversed(response.json().get("result", [])):
+    for update in reversed(get_telegram_updates(token, None)):
         message = update.get("message") or {}
         text = str(message.get("text", "")).strip()
         parts = text.split(maxsplit=1)
@@ -290,7 +318,13 @@ def discover_chat_id(token: str, setup_code: str) -> str | None:
 
 
 def empty_state(local_date: str) -> dict[str, Any]:
-    return {"local_date": local_date, "reports_sent": [], "alerts": {}}
+    return {
+        "local_date": local_date,
+        "reports_sent": [],
+        "alerts": {},
+        "subscribers": {},
+        "update_offset": None,
+    }
 
 
 def load_state(key: str, local_date: str) -> dict[str, Any]:
@@ -303,8 +337,9 @@ def load_state(key: str, local_date: str) -> dict[str, Any]:
         raise RuntimeError("Encrypted runtime state is invalid") from exc
     if state.get("local_date") != local_date:
         fresh = empty_state(local_date)
-        if state.get("chat_id"):
-            fresh["chat_id"] = state["chat_id"]
+        for key in ("chat_id", "admin_chat_id", "subscribers", "update_offset"):
+            if state.get(key) is not None:
+                fresh[key] = state[key]
         return fresh
     return state
 
@@ -314,6 +349,223 @@ def save_state(key: str, state: dict[str, Any]) -> None:
         json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     )
     STATE_PATH.write_bytes(encrypted)
+
+
+def subscriber_from_user(user: dict[str, Any], chat_id: str, now: datetime) -> dict[str, Any]:
+    return {
+        "chat_id": chat_id,
+        "username": str(user.get("username") or ""),
+        "first_name": str(user.get("first_name") or ""),
+        "last_name": str(user.get("last_name") or ""),
+        "enabled": True,
+        "joined_at": now.astimezone(ISRAEL_TZ).isoformat(timespec="seconds"),
+    }
+
+
+def ensure_multiuser_state(state: dict[str, Any], now: datetime) -> bool:
+    changed = False
+    legacy_chat_id = str(state.pop("chat_id", "") or "").strip()
+    admin_chat_id = str(state.get("admin_chat_id", "") or legacy_chat_id).strip()
+    if admin_chat_id and state.get("admin_chat_id") != admin_chat_id:
+        state["admin_chat_id"] = admin_chat_id
+        changed = True
+
+    subscribers = state.setdefault("subscribers", {})
+    if admin_chat_id and admin_chat_id not in subscribers:
+        subscribers[admin_chat_id] = {
+            "chat_id": admin_chat_id,
+            "username": "",
+            "first_name": "מנהל המערכת",
+            "last_name": "",
+            "enabled": True,
+            "joined_at": now.astimezone(ISRAEL_TZ).isoformat(timespec="seconds"),
+        }
+        changed = True
+    if "update_offset" not in state:
+        state["update_offset"] = None
+        changed = True
+    return changed
+
+
+def subscriber_label(subscriber: dict[str, Any]) -> str:
+    full_name = " ".join(
+        part for part in (str(subscriber.get("first_name", "")).strip(), str(subscriber.get("last_name", "")).strip()) if part
+    )
+    username = str(subscriber.get("username", "")).strip()
+    if username:
+        return f"{full_name or 'ללא שם'} (@{username})"
+    return full_name or "משתמש ללא שם"
+
+
+def permission_keyboard(chat_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ YES", "callback_data": f"subscriber:yes:{chat_id}"},
+                {"text": "🚫 NO", "callback_data": f"subscriber:no:{chat_id}"},
+            ]
+        ]
+    }
+
+
+def register_subscriber(
+    state: dict[str, Any],
+    message: dict[str, Any],
+    now: datetime,
+) -> tuple[dict[str, Any] | None, bool, bool]:
+    chat = message.get("chat") or {}
+    user = message.get("from") or {}
+    if chat.get("type") != "private" or chat.get("id") is None:
+        return None, False, False
+    chat_id = str(chat["id"])
+    subscribers = state.setdefault("subscribers", {})
+    existing = subscribers.get(chat_id)
+    is_new = existing is None
+    if is_new:
+        subscribers[chat_id] = subscriber_from_user(user, chat_id, now)
+        return subscribers[chat_id], True, True
+
+    changed = False
+    for key in ("username", "first_name", "last_name"):
+        new_value = str(user.get(key) or "")
+        if existing.get(key) != new_value:
+            existing[key] = new_value
+            changed = True
+    return existing, False, changed
+
+
+def set_subscriber_enabled(state: dict[str, Any], chat_id: str, enabled: bool) -> bool:
+    subscriber = state.setdefault("subscribers", {}).get(chat_id)
+    if subscriber is None or bool(subscriber.get("enabled", True)) == enabled:
+        return False
+    subscriber["enabled"] = enabled
+    return True
+
+
+def active_chat_ids(state: dict[str, Any]) -> list[str]:
+    return [
+        str(chat_id)
+        for chat_id, subscriber in state.get("subscribers", {}).items()
+        if bool(subscriber.get("enabled", True))
+    ]
+
+
+def users_message(state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    subscribers = state.get("subscribers", {})
+    lines = ["👥 <b>רשימת מנויים</b>", ""]
+    keyboard: list[list[dict[str, str]]] = []
+    ordered = sorted(subscribers.items(), key=lambda item: str(item[1].get("joined_at", "")))
+    for index, (chat_id, subscriber) in enumerate(ordered, start=1):
+        enabled = bool(subscriber.get("enabled", True))
+        status = "✅ YES" if enabled else "🚫 NO"
+        lines.append(
+            f"{index}. {html.escape(subscriber_label(subscriber))} | <b>{status}</b> | <code>{html.escape(str(chat_id))}</code>"
+        )
+        keyboard.append(
+            [
+                {"text": f"{index} ✅ YES", "callback_data": f"subscriber:yes:{chat_id}"},
+                {"text": f"{index} 🚫 NO", "callback_data": f"subscriber:no:{chat_id}"},
+            ]
+        )
+    if not ordered:
+        lines.append("אין עדיין מנויים.")
+    return "\n".join(lines), {"inline_keyboard": keyboard}
+
+
+def process_telegram_updates(token: str, state: dict[str, Any], now: datetime) -> bool:
+    offset_value = state.get("update_offset")
+    offset = int(offset_value) if offset_value is not None else None
+    updates = get_telegram_updates(token, offset)
+    if not updates:
+        return False
+
+    changed = False
+    admin_chat_id = str(state.get("admin_chat_id", ""))
+    for update in updates:
+        update_id = int(update.get("update_id", 0))
+        state["update_offset"] = max(int(state.get("update_offset") or 0), update_id + 1)
+        changed = True
+
+        message = update.get("message") or {}
+        text = str(message.get("text", "")).strip()
+        command = text.split(maxsplit=1)[0].split("@", maxsplit=1)[0] if text else ""
+
+        if command == "/start":
+            subscriber, is_new, profile_changed = register_subscriber(state, message, now)
+            changed = profile_changed or changed
+            if subscriber is None:
+                continue
+            chat_id = str(subscriber["chat_id"])
+            enabled = bool(subscriber.get("enabled", True))
+            if is_new:
+                send_telegram(
+                    token,
+                    chat_id,
+                    "✅ <b>הצטרפת לעדכוני המניות</b>\n\nתקבל כאן את הדוחות וההתראות. מנהל המערכת רשאי לאשר או לחסום את קבלת ההודעות.",
+                )
+                if admin_chat_id and chat_id != admin_chat_id:
+                    send_telegram(
+                        token,
+                        admin_chat_id,
+                        "👤 <b>מצטרף חדש לבוט</b>\n\n"
+                        f"{html.escape(subscriber_label(subscriber))}\n"
+                        f"מזהה: <code>{html.escape(chat_id)}</code>\n"
+                        "סטטוס התחלתי: <b>YES</b>",
+                        permission_keyboard(chat_id),
+                    )
+            else:
+                status = "פעילה" if enabled else "חסומה"
+                send_telegram(token, chat_id, f"ℹ️ ההרשמה שלך כבר קיימת. קבלת ההודעות כרגע <b>{status}</b>.")
+
+        elif command == "/users" and str((message.get("chat") or {}).get("id", "")) == admin_chat_id:
+            users_text, keyboard = users_message(state)
+            send_telegram(token, admin_chat_id, users_text, keyboard)
+
+        callback = update.get("callback_query") or {}
+        if callback:
+            callback_id = str(callback.get("id", ""))
+            actor_id = str((callback.get("from") or {}).get("id", ""))
+            data = str(callback.get("data", ""))
+            parts = data.split(":", maxsplit=2)
+            if actor_id != admin_chat_id or len(parts) != 3 or parts[0] != "subscriber":
+                if callback_id:
+                    answer_callback(token, callback_id, "אין הרשאה לפעולה")
+                continue
+            enabled = parts[1] == "yes"
+            target_chat_id = parts[2]
+            if parts[1] not in {"yes", "no"} or target_chat_id not in state.get("subscribers", {}):
+                answer_callback(token, callback_id, "המשתמש לא נמצא")
+                continue
+            changed = set_subscriber_enabled(state, target_chat_id, enabled) or changed
+            answer_callback(token, callback_id, "ההרשאה עודכנה")
+            subscriber = state["subscribers"][target_chat_id]
+            status = "YES" if enabled else "NO"
+            send_telegram(
+                token,
+                admin_chat_id,
+                f"עודכן: {html.escape(subscriber_label(subscriber))} מסומן כעת <b>{status}</b>.",
+            )
+            if target_chat_id != admin_chat_id:
+                user_status = "הופעלה" if enabled else "הושהתה"
+                try:
+                    send_telegram(token, target_chat_id, f"ℹ️ קבלת עדכוני המניות {user_status} על ידי מנהל המערכת.")
+                except requests.RequestException:
+                    pass
+    return changed
+
+
+def broadcast_telegram(token: str, state: dict[str, Any], text: str) -> bool:
+    changed = False
+    for chat_id in active_chat_ids(state):
+        try:
+            send_telegram(token, chat_id, text)
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code in {400, 403}:
+                changed = set_subscriber_enabled(state, chat_id, False) or changed
+        except requests.RequestException:
+            continue
+    return changed
 
 
 def due_report_slots(now: datetime, sent: set[str]) -> list[str]:
@@ -366,25 +618,37 @@ def main(now: datetime | None = None) -> int:
     local_date = now.astimezone(ISRAEL_TZ).date().isoformat()
     state = load_state(encryption_key, local_date)
 
-    chat_id = optional_env("TELEGRAM_CHAT_ID") or str(state.get("chat_id", "")).strip()
+    admin_chat_id = (
+        optional_env("TELEGRAM_CHAT_ID")
+        or str(state.get("admin_chat_id", "")).strip()
+        or str(state.get("chat_id", "")).strip()
+    )
     newly_connected = False
-    if not chat_id:
+    if not admin_chat_id:
         setup_code = required_env("TELEGRAM_SETUP_CODE")
-        chat_id = discover_chat_id(token, setup_code) or ""
-        if not chat_id:
+        admin_chat_id = discover_chat_id(token, setup_code) or ""
+        if not admin_chat_id:
             print("Waiting for the private Telegram connection command.")
             return 0
-        state["chat_id"] = chat_id
-        save_state(encryption_key, state)
+        state["admin_chat_id"] = admin_chat_id
         newly_connected = True
         send_telegram(
             token,
-            chat_id,
+            admin_chat_id,
             "✅ <b>הבוט חובר בהצלחה</b>\n\nהמעקב יפעל בימים שני עד שישי, בין 10:00 ל-18:00 לפי שעון ישראל.",
         )
 
+    state_changed = ensure_multiuser_state(state, now)
+    state_changed = process_telegram_updates(token, state, now) or state_changed
+    if state_changed or not STATE_PATH.exists():
+        save_state(encryption_key, state)
+
     if not is_monitoring_window(now):
         print("Telegram connected." if newly_connected else "Outside configured monitoring window.")
+        return 0
+
+    if not active_chat_ids(state):
+        print("No enabled Telegram subscribers.")
         return 0
 
     watchlist = load_watchlist(required_env("WATCHLIST_JSON"))
@@ -399,8 +663,10 @@ def main(now: datetime | None = None) -> int:
     if not quotes:
         raise RuntimeError("No market data was returned")
 
-    state_changed = False
-    sender = lambda message: send_telegram(token, chat_id, message)
+    delivery_changes: list[bool] = []
+
+    def sender(message: str) -> None:
+        delivery_changes.append(broadcast_telegram(token, state, message))
 
     sent_slots = set(state.get("reports_sent", []))
     for slot in due_report_slots(now, sent_slots):
@@ -410,6 +676,7 @@ def main(now: datetime | None = None) -> int:
         state_changed = True
 
     state_changed = process_alerts(quotes, threshold, state, now, sender) or state_changed
+    state_changed = any(delivery_changes) or state_changed
     if state_changed or not STATE_PATH.exists():
         save_state(encryption_key, state)
 
