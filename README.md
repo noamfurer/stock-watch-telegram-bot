@@ -23,13 +23,7 @@ Create these repository secrets under **Settings > Secrets and variables > Actio
 | `TELEGRAM_CHAT_ID` | Optional. A numeric chat ID, if already known |
 | `WATCHLIST_JSON` | JSON array in the format below |
 | `ALERT_THRESHOLD_PERCENT` | `4` |
-| `STATE_ENCRYPTION_KEY` | A Fernet key generated with the command below |
-
-Generate the state key locally:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
+| `STATE_ENCRYPTION_KEY` | Optional advanced setting. By default it is derived securely from the bot token |
 
 After adding the bot token, setup code and state key, send this private message to the new bot:
 
@@ -38,6 +32,8 @@ After adding the bot token, setup code and state key, send this private message 
 ```
 
 Run the workflow manually once, or wait for its next scheduled run. The bot discovers the matching chat without printing its ID, stores it inside the encrypted runtime state and sends a confirmation message. `TELEGRAM_SETUP_CODE` can then be deleted.
+
+If the Telegram bot token is rotated later, delete `runtime_state.enc` before the next run or set a permanent `STATE_ENCRYPTION_KEY` first.
 
 Watchlist shape:
 
