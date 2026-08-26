@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import html
 import json
 import os
@@ -276,11 +277,13 @@ def discover_chat_id(token: str, setup_code: str) -> str | None:
         timeout=20,
     )
     response.raise_for_status()
-    expected = f"/connect {setup_code}"
     for update in reversed(response.json().get("result", [])):
         message = update.get("message") or {}
         text = str(message.get("text", "")).strip()
-        if text == expected:
+        parts = text.split(maxsplit=1)
+        command = parts[0].split("@", maxsplit=1)[0] if parts else ""
+        supplied_code = parts[1].strip() if len(parts) == 2 else ""
+        if command == "/connect" and hmac.compare_digest(supplied_code, setup_code):
             chat_id = (message.get("chat") or {}).get("id")
             return str(chat_id) if chat_id is not None else None
     return None
