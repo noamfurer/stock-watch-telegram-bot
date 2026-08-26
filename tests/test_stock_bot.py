@@ -43,6 +43,13 @@ def test_report_matches_requested_shape() -> None:
     assert "1. <b>חברה לדוגמה</b> (DEMO): 23010.00 ₪ | 🔴 -170.00 (-0.73%)" in report
 
 
+def test_alert_title_contains_organization_name() -> None:
+    quote = Quote(sample_stock(), 96.0, -4.0, -4.0)
+    alert = stock_bot.format_alert(quote, 4.0, datetime(2026, 8, 26, 12, 0, tzinfo=TZ))
+    assert alert.startswith("🛎️ <b>חברה לדוגמה - התראת מניה</b>\n")
+    assert "🚨" not in alert
+
+
 def test_alert_only_on_crossing_and_rearms() -> None:
     messages: list[str] = []
     state = {"alerts": {}}
