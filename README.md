@@ -71,9 +71,11 @@ Changing `WATCHLIST_JSON` or `ALERT_THRESHOLD_PERCENT` changes the monitored com
 
 ## Schedule behavior
 
-GitHub Actions runs every 15 minutes all day so subscriptions and permission buttons are processed throughout the week. The Python process requests market data and sends market notifications only when local time is Monday-Friday between 10:00 and 18:00 in `Asia/Jerusalem`. This automatically follows Israeli daylight-saving time.
+GitHub Actions schedules primary runs at minutes 07, 22, 37 and 52 of every hour. Backup runs are scheduled five minutes later at minutes 12, 27, 42 and 57. A backup run skips market work when a successful check was recorded in the previous 10 minutes. Manual workflow runs always bypass this backup guard.
 
-GitHub documents that scheduled workflows can occasionally start late. A report slot remains eligible for 90 minutes and encrypted state prevents duplicates.
+Telegram subscriptions and permission buttons are processed throughout the week. The Python process requests market data and sends market notifications only when local time is Monday-Friday between 10:00 and 18:00 in `Asia/Jerusalem`. This automatically follows Israeli daylight-saving time.
+
+GitHub documents that scheduled workflows can occasionally start late. A report slot remains eligible for 90 minutes, encrypted state prevents duplicates, and the backup schedule retries missed primary triggers.
 
 ## Local tests
 
