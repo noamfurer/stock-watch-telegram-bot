@@ -329,6 +329,7 @@ def empty_state(local_date: str) -> dict[str, Any]:
         "alerts": {},
         "subscribers": {},
         "update_offset": None,
+        "snapshot_requests": [],
     }
 
 
@@ -342,7 +343,7 @@ def load_state(key: str, local_date: str) -> dict[str, Any]:
         raise RuntimeError("Encrypted runtime state is invalid") from exc
     if state.get("local_date") != local_date:
         fresh = empty_state(local_date)
-        for key in ("chat_id", "admin_chat_id", "subscribers", "update_offset"):
+        for key in ("chat_id", "admin_chat_id", "subscribers", "update_offset", "snapshot_requests"):
             if state.get(key) is not None:
                 fresh[key] = state[key]
         return fresh
@@ -388,6 +389,9 @@ def ensure_multiuser_state(state: dict[str, Any], now: datetime) -> bool:
         changed = True
     if "update_offset" not in state:
         state["update_offset"] = None
+        changed = True
+    if "snapshot_requests" not in state:
+        state["snapshot_requests"] = []
         changed = True
     return changed
 
@@ -453,6 +457,55 @@ def active_chat_ids(state: dict[str, Any]) -> list[str]:
         for chat_id, subscriber in state.get("subscribers", {}).items()
         if bool(subscriber.get("enabled", True))
     ]
+
+
+def queue_snapshot_request(state: dict[str, Any], chat_id: str) -> bool:
+    requests_queue = state.setdefault("snapshot_requests", [])
+    if chat_id in requests_queue:
+        return False
+    requests_queue.append(chat_id)
+    return True
+
+
+def normalize_snapshot_requests(state: dict[str, Any]) -> bool:
+    active = set(active_chat_ids(state))
+    original = [str(chat_id) for chat_id in state.setdefault("snapshot_requests", [])]
+    normalized = list(dict.fromkeys(chat_id for chat_id in original if chat_id in active))
+    if normalized == original:
+        return False
+    state["snapshot_requests"] = normalized
+    return True
+
+
+def fulfill_snapshot_requests(token: str, state: dict[str, Any], text: str) -> bool:
+    requested = [str(chat_id) for chat_id in state.get("snapshot_requests", [])]
+    if not requested:
+        return False
+
+    remaining: list[str] = []
+    changed = False
+    for chat_id in requested:
+        subscriber = state.get("subscribers", {}).get(chat_id)
+        if subscriber is None or not bool(subscriber.get("enabled", True)):
+            changed = True
+            continue
+        try:
+            send_telegram(token, chat_id, text)
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code in {400, 403}:
+                changed = set_subscriber_enabled(state, chat_id, False) or changed
+            else:
+                remaining.append(chat_id)
+        except requests.RequestException:
+            remaining.append(chat_id)
+        else:
+            changed = True
+
+    if remaining != requested:
+        state["snapshot_requests"] = remaining
+        changed = True
+    return changed
 
 
 def users_message(state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -525,6 +578,19 @@ def process_telegram_updates(token: str, state: dict[str, Any], now: datetime) -
         elif command == "/users" and str((message.get("chat") or {}).get("id", "")) == admin_chat_id:
             users_text, keyboard = users_message(state)
             send_telegram(token, admin_chat_id, users_text, keyboard)
+
+        elif text == "עכשיו" or command == "/now":
+            chat = message.get("chat") or {}
+            chat_id = str(chat.get("id", ""))
+            if chat.get("type") != "private" or not chat_id:
+                continue
+            subscriber = state.get("subscribers", {}).get(chat_id)
+            if subscriber is None:
+                send_telegram(token, chat_id, "כדי לקבל תמונת מצב, יש ללחוץ תחילה על <b>Start</b>.")
+            elif not bool(subscriber.get("enabled", True)):
+                send_telegram(token, chat_id, "קבלת עדכוני המניות שלך חסומה כרגע.")
+            else:
+                changed = queue_snapshot_request(state, chat_id) or changed
 
         callback = update.get("callback_query") or {}
         if callback:
@@ -663,10 +729,13 @@ def main(now: datetime | None = None) -> int:
 
     state_changed = ensure_multiuser_state(state, now)
     state_changed = process_telegram_updates(token, state, now) or state_changed
+    state_changed = normalize_snapshot_requests(state) or state_changed
     if state_changed or not STATE_PATH.exists():
         save_state(encryption_key, state)
 
-    if not is_monitoring_window(now):
+    snapshot_requested = bool(state.get("snapshot_requests"))
+    monitoring_window = is_monitoring_window(now)
+    if not monitoring_window and not snapshot_requested:
         print("Telegram connected." if newly_connected else "Outside configured monitoring window.")
         return 0
 
@@ -674,17 +743,23 @@ def main(now: datetime | None = None) -> int:
         print("No enabled Telegram subscribers.")
         return 0
 
-    if not env_flag("FORCE_MONITOR_RUN") and has_recent_successful_check(state, now):
+    if (
+        not env_flag("FORCE_MONITOR_RUN")
+        and not snapshot_requested
+        and has_recent_successful_check(state, now)
+    ):
         print("Recent successful market check found. Backup run skipped.")
         return 0
 
     watchlist = load_watchlist(required_env("WATCHLIST_JSON"))
-    try:
-        threshold = float(required_env("ALERT_THRESHOLD_PERCENT"))
-    except ValueError as exc:
-        raise RuntimeError("ALERT_THRESHOLD_PERCENT must be numeric") from exc
-    if threshold <= 0:
-        raise RuntimeError("ALERT_THRESHOLD_PERCENT must be positive")
+    threshold: float | None = None
+    if monitoring_window:
+        try:
+            threshold = float(required_env("ALERT_THRESHOLD_PERCENT"))
+        except ValueError as exc:
+            raise RuntimeError("ALERT_THRESHOLD_PERCENT must be numeric") from exc
+        if threshold <= 0:
+            raise RuntimeError("ALERT_THRESHOLD_PERCENT must be positive")
 
     quotes = fetch_quotes(watchlist)
     if not quotes:
@@ -695,6 +770,15 @@ def main(now: datetime | None = None) -> int:
     def sender(message: str) -> None:
         delivery_changes.append(broadcast_telegram(token, state, message))
 
+    if snapshot_requested:
+        state_changed = fulfill_snapshot_requests(token, state, format_report(quotes, now)) or state_changed
+
+    if not monitoring_window:
+        if state_changed or not STATE_PATH.exists():
+            save_state(encryption_key, state)
+        print(f"On-demand snapshot completed. Quotes received: {len(quotes)}.")
+        return 0
+
     sent_slots = set(state.get("reports_sent", []))
     for slot in due_report_slots(now, sent_slots):
         sender(format_report(quotes, now))
@@ -702,6 +786,8 @@ def main(now: datetime | None = None) -> int:
         state["reports_sent"] = sorted(sent_slots)
         state_changed = True
 
+    if threshold is None:
+        raise RuntimeError("Alert threshold was not initialized")
     state_changed = process_alerts(quotes, threshold, state, now, sender) or state_changed
     state_changed = any(delivery_changes) or state_changed
     state["last_successful_market_check"] = now.astimezone(ISRAEL_TZ).isoformat(timespec="seconds")
