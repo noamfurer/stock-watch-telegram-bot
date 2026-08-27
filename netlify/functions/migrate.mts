@@ -76,6 +76,7 @@ export default async (request: Request): Promise<Response> => {
   if (!await verifyGitHubMigrationRequest(request)) {
     return Response.json({ ok: false, reason: "unauthorized" }, { status: 401 });
   }
+  let stage = "request";
   try {
     const health = await loadHealth();
     if (health.initialized) return Response.json({ ok: false, reason: "already_initialized" }, { status: 409 });
@@ -84,13 +85,16 @@ export default async (request: Request): Promise<Response> => {
     const legacyState = body.legacyState?.trim() ?? "";
     if (!token || !legacyState || !body.watchlistJson) throw new Error("Migration payload is incomplete");
 
+    stage = "legacy_state";
     const legacy = decryptLegacyFernet(token, legacyState);
     const threshold = Number(body.threshold);
     if (!Number.isFinite(threshold) || threshold <= 0) throw new Error("Invalid alert threshold");
+    stage = "watchlist";
     const watchlist = loadWatchlist(body.watchlistJson);
     const subscribers = migrateSubscribers(legacy);
     const monitor = migrateMonitor(legacy);
 
+    stage = "private_storage";
     if (!await hasConfig()) {
       const config: BotConfig = {
         version: 1,
@@ -105,6 +109,7 @@ export default async (request: Request): Promise<Response> => {
       if (existing.token !== token) throw new Error("Migration token does not match stored configuration");
     }
 
+    stage = "telegram_webhook";
     const baseUrl = requiredNetlifyEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
     await setWebhook(token, `${baseUrl}/api/telegram`, requiredNetlifyEnv("TELEGRAM_WEBHOOK_SECRET"));
     const now = new Date().toISOString();
@@ -112,7 +117,7 @@ export default async (request: Request): Promise<Response> => {
     return Response.json({ ok: true, subscribers: Object.keys(subscribers.subscribers).length, symbols: watchlist.length });
   } catch (error) {
     console.error("Migration failed", error instanceof Error ? error.message : "Unknown error");
-    return Response.json({ ok: false, reason: "migration_failed" }, { status: 400 });
+    return Response.json({ ok: false, reason: "migration_failed", stage }, { status: 400 });
   }
 };
 
