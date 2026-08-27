@@ -1,5 +1,6 @@
 import type { Config } from "@netlify/functions";
 
+import { verifyGitHubMigrationRequest } from "./_shared/github-oidc.js";
 import { loadWatchlist } from "./_shared/watchlist.js";
 import {
   decryptLegacyFernet,
@@ -72,6 +73,9 @@ function migrateMonitor(legacy: Record<string, unknown>): MonitorState {
 
 export default async (request: Request): Promise<Response> => {
   if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
+  if (!await verifyGitHubMigrationRequest(request)) {
+    return Response.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+  }
   try {
     const health = await loadHealth();
     if (health.initialized) return Response.json({ ok: false, reason: "already_initialized" }, { status: 409 });
