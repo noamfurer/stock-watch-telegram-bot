@@ -10,7 +10,7 @@ import {
   saveSubscribers,
 } from "./storage.js";
 import { sendMessage } from "./telegram.js";
-import { hasRecentSuccess, isMonitoringWindow, israelTime, reportSlotsDue } from "./time.js";
+import { hasRecentSuccess, isMonitoringWindow, israelTime, israelTimestamp, reportSlotsDue } from "./time.js";
 import type { MonitorState, Quote, SubscriberState } from "./types.js";
 
 type RunKind = "primary" | "backup";
@@ -64,16 +64,25 @@ async function processAlerts(
 
 export async function runMonitor(kind: RunKind): Promise<void> {
   const now = new Date();
+  const localTimestamp = israelTimestamp(now);
   const health = await loadHealth();
   const runField = kind === "primary" ? "last_primary_success" : "last_backup_success";
   try {
     if (!health.initialized) return;
     if (!isMonitoringWindow(now)) {
+      console.log(`${kind} monitor skipped outside Israel market window`, {
+        israel_time: localTimestamp,
+        utc_time: now.toISOString(),
+      });
       await saveHealth({ ...health, [runField]: now.toISOString(), last_error: undefined });
       return;
     }
 
     const local = israelTime(now);
+    console.log(`${kind} monitor started`, {
+      israel_time: localTimestamp,
+      utc_time: now.toISOString(),
+    });
     const monitor = await loadMonitor(local.localDate);
     if (kind === "backup" && hasRecentSuccess(monitor.last_successful_market_check, now)) {
       await saveHealth({ ...health, last_backup_success: now.toISOString(), last_error: undefined });

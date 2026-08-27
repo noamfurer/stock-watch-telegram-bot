@@ -1,4 +1,4 @@
-const ISRAEL_TZ = "Asia/Jerusalem";
+export const ISRAEL_TZ = "Asia/Jerusalem";
 
 export interface IsraelTime {
   localDate: string;
@@ -40,7 +40,12 @@ export function isMonitoringWindow(now = new Date()): boolean {
   const local = israelTime(now);
   const weekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(local.weekday);
   const minutes = local.hour * 60 + local.minute;
-  return weekday && minutes >= 10 * 60 && minutes <= 18 * 60;
+  return weekday && minutes >= 10 * 60 && minutes < 18 * 60;
+}
+
+export function israelTimestamp(now = new Date()): string {
+  const local = israelTime(now);
+  return `${local.localDate}T${local.hour.toString().padStart(2, "0")}:${local.minute.toString().padStart(2, "0")}:00[${ISRAEL_TZ}]`;
 }
 
 export function reportSlotsDue(now: Date, alreadySent: Set<string>): string[] {

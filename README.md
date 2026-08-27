@@ -73,11 +73,11 @@ Changing `WATCHLIST_JSON` or `ALERT_THRESHOLD_PERCENT` changes the monitored com
 
 ## Schedule behavior
 
-GitHub Actions schedules primary runs at minutes 07, 22, 37 and 52 of every hour. Backup runs are scheduled five minutes later at minutes 12, 27, 42 and 57. A backup run skips market work when a successful check was recorded in the previous 10 minutes. Manual workflow runs always bypass this backup guard.
+Netlify invokes primary runs at minutes 07, 22, 37 and 52 of every hour. Backup runs are invoked five minutes later at minutes 12, 27, 42 and 57. A backup run skips market work when a successful check was recorded in the previous 10 minutes.
 
-Telegram subscriptions and permission buttons are processed throughout the week. The Python process requests market data and sends market notifications only when local time is Monday-Friday between 10:00 and 18:00 in `Asia/Jerusalem`. This automatically follows Israeli daylight-saving time.
+Netlify cron expressions are evaluated in UTC, so the functions validate every invocation against `Asia/Jerusalem` before fetching market data. Market checks and notifications run only Monday-Friday from 10:00 until 18:00 Israel time. This automatically follows Israeli daylight-saving time without changing the cron expressions.
 
-GitHub documents that scheduled workflows can occasionally start late. A report slot remains eligible for 90 minutes, encrypted state prevents duplicates, and the backup schedule retries missed primary triggers.
+A report slot remains eligible for 90 minutes, private state prevents duplicates, and the backup schedule retries missed primary triggers.
 
 ## Local tests
 

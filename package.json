@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && npm run test:time",
+    "test:time": "node --experimental-strip-types --test tests/time_window.test.mts"
   },
   "dependencies": {
     "@netlify/blobs": "^10.0.9",
