@@ -97,6 +97,8 @@ export default async (request: Request): Promise<Response> => {
     stage = "private_storage_lookup";
     const configExists = await hasConfig();
     if (!configExists) {
+      stage = "app_encryption_key";
+      requiredNetlifyEnv("APP_ENCRYPTION_KEY");
       stage = "token_encryption";
       const config: BotConfig = {
         version: 1,
