@@ -1,15 +1,15 @@
 import type { Config } from "@netlify/functions";
 
 import { getWebhookInfo } from "./_shared/telegram.js";
-import { loadConfig, loadHealth, loadSubscribers, requiredNetlifyEnv } from "./_shared/storage.js";
+import { loadConfig, loadHealth, loadSubscribers } from "./_shared/storage.js";
 
-export default async (): Promise<Response> => {
+export default async (request: Request): Promise<Response> => {
   try {
     const health = await loadHealth();
     if (!health.initialized) return Response.json({ ok: false, initialized: false }, { status: 503 });
     const [{ token }, subscribers] = await Promise.all([loadConfig(), loadSubscribers()]);
     const webhook = await getWebhookInfo(token);
-    const expected = `${requiredNetlifyEnv("PUBLIC_BASE_URL").replace(/\/$/, "")}/api/telegram`;
+    const expected = `${new URL(request.url).origin}/api/telegram`;
     const webhookOk = webhook.url === expected && !webhook.last_error_message;
     return Response.json({
       ok: webhookOk,
