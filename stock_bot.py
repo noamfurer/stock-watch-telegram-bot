@@ -559,7 +559,7 @@ def process_telegram_updates(token: str, state: dict[str, Any], now: datetime) -
                 send_telegram(
                     token,
                     chat_id,
-                    "✅ <b>הצטרפת לעדכוני המניות</b>\n\nתקבל כאן את הדוחות וההתראות. מנהל המערכת רשאי לאשר או לחסום את קבלת ההודעות.",
+                    "✅ <b>הצטרפת לעדכוני המניות</b>\n\nתקבל כאן את הדוחות וההתראות. לקבלת תמונת מצב מלאה לפי בקשה, אפשר לכתוב <b>עכשיו</b>. מנהל המערכת רשאי לאשר או לחסום את קבלת ההודעות.",
                 )
                 if admin_chat_id and chat_id != admin_chat_id:
                     send_telegram(
