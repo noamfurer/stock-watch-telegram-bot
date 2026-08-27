@@ -34,15 +34,10 @@ export interface MonitorState {
   last_successful_market_check?: string;
 }
 
-export interface EncryptedValue {
-  iv: string;
-  ciphertext: string;
-  tag: string;
-}
-
 export interface BotConfig {
   version: 1;
-  encrypted_token: EncryptedValue;
+  token: string;
+  webhook_secret: string;
   watchlist: Stock[];
   threshold: number;
   migrated_at: string;
