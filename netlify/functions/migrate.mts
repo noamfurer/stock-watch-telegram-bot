@@ -1,14 +1,13 @@
 import type { Config } from "@netlify/functions";
+import { randomBytes } from "node:crypto";
 
 import { verifyGitHubMigrationRequest } from "./_shared/github-oidc.js";
 import { loadWatchlist } from "./_shared/watchlist.js";
 import {
   decryptLegacyFernet,
-  encryptSecret,
   hasConfig,
   loadHealth,
   loadConfig,
-  requiredNetlifyEnv,
   saveConfig,
   saveHealth,
   saveMonitor,
@@ -97,12 +96,10 @@ export default async (request: Request): Promise<Response> => {
     stage = "private_storage_lookup";
     const configExists = await hasConfig();
     if (!configExists) {
-      stage = "app_encryption_key";
-      requiredNetlifyEnv("APP_ENCRYPTION_KEY");
-      stage = "token_encryption";
       const config: BotConfig = {
         version: 1,
-        encrypted_token: encryptSecret(token),
+        token,
+        webhook_secret: randomBytes(32).toString("hex"),
         watchlist,
         threshold,
         migrated_at: new Date().toISOString(),
@@ -115,9 +112,29 @@ export default async (request: Request): Promise<Response> => {
       if (existing.token !== token) throw new Error("Migration token does not match stored configuration");
     }
 
+    const stored = await loadConfig();
+    const baseUrl = new URL(request.url).origin;
+    stage = "immediate_snapshot_test";
+    const testResponse = await fetch(`${baseUrl}/api/telegram`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": stored.config.webhook_secret,
+      },
+      body: JSON.stringify({
+        update_id: Date.now(),
+        message: {
+          text: "עכשיו",
+          chat: { id: Number(subscribers.admin_chat_id), type: "private" },
+          from: { id: Number(subscribers.admin_chat_id) },
+        },
+      }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!testResponse.ok) throw new Error("Immediate snapshot test failed");
+
     stage = "telegram_webhook";
-    const baseUrl = requiredNetlifyEnv("PUBLIC_BASE_URL").replace(/\/$/, "");
-    await setWebhook(token, `${baseUrl}/api/telegram`, requiredNetlifyEnv("TELEGRAM_WEBHOOK_SECRET"));
+    await setWebhook(token, `${baseUrl}/api/telegram`, stored.config.webhook_secret);
     const now = new Date().toISOString();
     await saveHealth({ ...health, initialized: true, webhook_configured_at: now, last_error: undefined });
     return Response.json({ ok: true, subscribers: Object.keys(subscribers.subscribers).length, symbols: watchlist.length });
