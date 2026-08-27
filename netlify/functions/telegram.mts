@@ -3,7 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { escapeHtml, formatReport, permissionKeyboard, subscriberLabel } from "./_shared/format.js";
 import { fetchQuotes } from "./_shared/market.js";
-import { loadConfig, loadSubscribers, requiredNetlifyEnv, saveSubscribers } from "./_shared/storage.js";
+import { loadConfig, loadSubscribers, saveSubscribers } from "./_shared/storage.js";
 import { answerCallback, sendMessage } from "./_shared/telegram.js";
 import type { Subscriber, SubscriberState } from "./_shared/types.js";
 
@@ -30,8 +30,7 @@ interface TelegramUpdate {
   };
 }
 
-function authorized(request: Request): boolean {
-  const expected = requiredNetlifyEnv("TELEGRAM_WEBHOOK_SECRET");
+function authorized(request: Request, expected: string): boolean {
   const actual = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
   const left = Buffer.from(actual);
   const right = Buffer.from(expected);
@@ -184,9 +183,9 @@ async function processCallback(token: string, state: SubscriberState, update: Te
 export default async (request: Request): Promise<Response> => {
   if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
   try {
-    if (!authorized(request)) return new Response("Unauthorized", { status: 401 });
+    const { config, token } = await loadConfig();
+    if (!authorized(request, config.webhook_secret)) return new Response("Unauthorized", { status: 401 });
     const update = await request.json() as TelegramUpdate;
-    const { token } = await loadConfig();
     const state = await loadSubscribers();
     let changed = false;
     if (update.message) changed = await processMessage(token, state, update.message, new Date()) || changed;
