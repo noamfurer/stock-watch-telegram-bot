@@ -1,15 +1,12 @@
 import { getStore } from "@netlify/blobs";
-import { createCipheriv, createDecipheriv, createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createDecipheriv, createHmac, createHash, timingSafeEqual } from "node:crypto";
 
 import type {
   BotConfig,
-  EncryptedValue,
   HealthState,
   MonitorState,
   SubscriberState,
 } from "./types.js";
-
-declare const Netlify: { env: { get(name: string): string | undefined } };
 
 const STORE_NAME = "stock-watch-bot";
 const CONFIG_KEY = "config.json";
@@ -19,38 +16,6 @@ const HEALTH_KEY = "health.json";
 
 function store() {
   return getStore(STORE_NAME, { consistency: "strong" });
-}
-
-export function requiredNetlifyEnv(name: string): string {
-  const value = (typeof Netlify !== "undefined" ? Netlify.env.get(name) : process.env[name])?.trim();
-  if (!value) throw new Error(`Missing required environment variable: ${name}`);
-  return value;
-}
-
-function appKey(): Buffer {
-  const key = Buffer.from(requiredNetlifyEnv("APP_ENCRYPTION_KEY"), "base64");
-  if (key.length !== 32) throw new Error("APP_ENCRYPTION_KEY must contain 32 bytes");
-  return key;
-}
-
-export function encryptSecret(value: string): EncryptedValue {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", appKey(), iv);
-  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  return {
-    iv: Buffer.from(iv).toString("base64"),
-    ciphertext: ciphertext.toString("base64"),
-    tag: cipher.getAuthTag().toString("base64"),
-  };
-}
-
-export function decryptSecret(value: EncryptedValue): string {
-  const decipher = createDecipheriv("aes-256-gcm", appKey(), Buffer.from(value.iv, "base64"));
-  decipher.setAuthTag(Buffer.from(value.tag, "base64"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(value.ciphertext, "base64")),
-    decipher.final(),
-  ]).toString("utf8");
 }
 
 export function decryptLegacyFernet(token: string, encodedState: string): Record<string, unknown> {
@@ -77,7 +42,7 @@ export function decryptLegacyFernet(token: string, encodedState: string): Record
 export async function loadConfig(): Promise<{ config: BotConfig; token: string }> {
   const config = await store().get(CONFIG_KEY, { type: "json" }) as BotConfig | null;
   if (!config) throw new Error("Bot configuration has not been initialized");
-  return { config, token: decryptSecret(config.encrypted_token) };
+  return { config, token: config.token };
 }
 
 export async function saveConfig(config: BotConfig): Promise<void> {
