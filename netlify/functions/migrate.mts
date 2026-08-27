@@ -94,8 +94,10 @@ export default async (request: Request): Promise<Response> => {
     const subscribers = migrateSubscribers(legacy);
     const monitor = migrateMonitor(legacy);
 
-    stage = "private_storage";
-    if (!await hasConfig()) {
+    stage = "private_storage_lookup";
+    const configExists = await hasConfig();
+    if (!configExists) {
+      stage = "token_encryption";
       const config: BotConfig = {
         version: 1,
         encrypted_token: encryptSecret(token),
@@ -103,8 +105,10 @@ export default async (request: Request): Promise<Response> => {
         threshold,
         migrated_at: new Date().toISOString(),
       };
+      stage = "private_storage_write";
       await Promise.all([saveConfig(config), saveSubscribers(subscribers), saveMonitor(monitor)]);
     } else {
+      stage = "private_storage_read";
       const existing = await loadConfig();
       if (existing.token !== token) throw new Error("Migration token does not match stored configuration");
     }
