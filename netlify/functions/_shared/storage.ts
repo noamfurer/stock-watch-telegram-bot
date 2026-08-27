@@ -1,5 +1,5 @@
 import { getStore } from "@netlify/blobs";
-import { createCipheriv, createDecipheriv, createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type {
   BotConfig,
@@ -34,7 +34,7 @@ function appKey(): Buffer {
 }
 
 export function encryptSecret(value: string): EncryptedValue {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", appKey(), iv);
   const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   return {
