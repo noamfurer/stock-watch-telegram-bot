@@ -17,7 +17,9 @@ The repository can be public. The watchlist, alert threshold and bot token are s
 - A blocked subscriber remains encrypted in the registry but receives no reports or alerts.
 - Sending `/start` again does not bypass a `NO` status.
 - The administrator can send `/users` to receive the full encrypted registry as a private Telegram message with `YES` and `NO` controls.
-- Telegram updates are checked every 15 minutes, so joining and permission changes can take up to 15 minutes.
+- An enabled subscriber can send `עכשיו` or `/now` to request a full private snapshot using the latest available market data, including outside market hours.
+- Repeated snapshot requests from the same subscriber are deduplicated until delivery.
+- Telegram updates are processed on the primary and backup schedules, so commands usually receive a response within 5 to 10 minutes.
 
 ## Data sources
 
