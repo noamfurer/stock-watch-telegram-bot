@@ -22,6 +22,7 @@ ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 STATE_PATH = Path(os.getenv("STATE_PATH", "runtime_state.enc"))
 REPORT_TIMES = (clock_time(11, 0), clock_time(14, 0), clock_time(16, 30))
 REPORT_GRACE = timedelta(minutes=90)
+BACKUP_SKIP_WINDOW = timedelta(minutes=10)
 
 HEBREW_WEEKDAYS = (
     "יום שני",
@@ -88,6 +89,10 @@ def required_env(name: str) -> str:
 
 def optional_env(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def env_flag(name: str) -> bool:
+    return optional_env(name).lower() in {"1", "true", "yes", "on"}
 
 
 def state_encryption_key(token: str) -> str:
@@ -579,6 +584,24 @@ def due_report_slots(now: datetime, sent: set[str]) -> list[str]:
     return due
 
 
+def has_recent_successful_check(
+    state: dict[str, Any],
+    now: datetime,
+    window: timedelta = BACKUP_SKIP_WINDOW,
+) -> bool:
+    raw = str(state.get("last_successful_market_check", "")).strip()
+    if not raw:
+        return False
+    try:
+        last_check = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if last_check.tzinfo is None:
+        last_check = last_check.replace(tzinfo=ISRAEL_TZ)
+    elapsed = now.astimezone(ISRAEL_TZ) - last_check.astimezone(ISRAEL_TZ)
+    return timedelta(0) <= elapsed < window
+
+
 def alert_direction(percent: float, threshold: float) -> str | None:
     if percent >= threshold:
         return "up"
@@ -651,6 +674,10 @@ def main(now: datetime | None = None) -> int:
         print("No enabled Telegram subscribers.")
         return 0
 
+    if not env_flag("FORCE_MONITOR_RUN") and has_recent_successful_check(state, now):
+        print("Recent successful market check found. Backup run skipped.")
+        return 0
+
     watchlist = load_watchlist(required_env("WATCHLIST_JSON"))
     try:
         threshold = float(required_env("ALERT_THRESHOLD_PERCENT"))
@@ -677,6 +704,8 @@ def main(now: datetime | None = None) -> int:
 
     state_changed = process_alerts(quotes, threshold, state, now, sender) or state_changed
     state_changed = any(delivery_changes) or state_changed
+    state["last_successful_market_check"] = now.astimezone(ISRAEL_TZ).isoformat(timespec="seconds")
+    state_changed = True
     if state_changed or not STATE_PATH.exists():
         save_state(encryption_key, state)
 
