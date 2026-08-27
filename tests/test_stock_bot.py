@@ -108,6 +108,7 @@ def test_chat_id_survives_daily_state_reset(tmp_path: Path, monkeypatch) -> None
         "alerts": {},
         "subscribers": {},
         "update_offset": None,
+        "snapshot_requests": [],
         "chat_id": "12345",
     }
 
@@ -137,6 +138,96 @@ def test_new_subscriber_starts_enabled_and_block_cannot_be_bypassed() -> None:
     assert not is_new and not changed
     assert subscriber and subscriber["enabled"] is False
     assert stock_bot.active_chat_ids(state) == []
+
+
+def test_now_message_queues_one_snapshot_for_enabled_subscriber(monkeypatch) -> None:
+    state = {
+        "admin_chat_id": "12345",
+        "subscribers": {
+            "98765": {
+                "chat_id": "98765",
+                "enabled": True,
+            }
+        },
+        "snapshot_requests": [],
+        "update_offset": None,
+    }
+    updates = [
+        {
+            "update_id": 10,
+            "message": {
+                "text": "עכשיו",
+                "chat": {"id": 98765, "type": "private"},
+                "from": {"id": 98765},
+            },
+        },
+        {
+            "update_id": 11,
+            "message": {
+                "text": "עכשיו",
+                "chat": {"id": 98765, "type": "private"},
+                "from": {"id": 98765},
+            },
+        },
+    ]
+    monkeypatch.setattr(stock_bot, "get_telegram_updates", lambda token, offset: updates)
+    assert stock_bot.process_telegram_updates("token", state, datetime(2026, 8, 26, 12, 0, tzinfo=TZ))
+    assert state["snapshot_requests"] == ["98765"]
+
+
+def test_now_message_does_not_queue_snapshot_for_blocked_subscriber(monkeypatch) -> None:
+    state = {
+        "admin_chat_id": "12345",
+        "subscribers": {
+            "98765": {
+                "chat_id": "98765",
+                "enabled": False,
+            }
+        },
+        "snapshot_requests": [],
+        "update_offset": None,
+    }
+    updates = [
+        {
+            "update_id": 12,
+            "message": {
+                "text": "/now",
+                "chat": {"id": 98765, "type": "private"},
+                "from": {"id": 98765},
+            },
+        }
+    ]
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(stock_bot, "get_telegram_updates", lambda token, offset: updates)
+    monkeypatch.setattr(
+        stock_bot,
+        "send_telegram",
+        lambda token, chat_id, text, reply_markup=None: sent.append((chat_id, text)),
+    )
+    assert stock_bot.process_telegram_updates("token", state, datetime(2026, 8, 26, 12, 0, tzinfo=TZ))
+    assert state["snapshot_requests"] == []
+    assert sent and "חסומה" in sent[0][1]
+
+
+def test_snapshot_request_is_removed_after_delivery(monkeypatch) -> None:
+    state = {
+        "subscribers": {
+            "98765": {
+                "chat_id": "98765",
+                "enabled": True,
+            }
+        },
+        "snapshot_requests": ["98765"],
+    }
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        stock_bot,
+        "send_telegram",
+        lambda token, chat_id, text, reply_markup=None: sent.append((chat_id, text)),
+    )
+    assert stock_bot.fulfill_snapshot_requests("token", state, "snapshot")
+    assert sent == [("98765", "snapshot")]
+    assert state["snapshot_requests"] == []
 
 
 def test_admin_user_list_contains_yes_no_controls() -> None:
