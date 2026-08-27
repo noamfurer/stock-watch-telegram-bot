@@ -30,6 +30,27 @@ def test_monitoring_window() -> None:
     assert not stock_bot.is_monitoring_window(datetime(2026, 8, 26, 9, 59, tzinfo=TZ))
 
 
+def test_backup_run_skips_after_recent_success() -> None:
+    now = datetime(2026, 8, 26, 12, 12, tzinfo=TZ)
+    state = {"last_successful_market_check": "2026-08-26T12:07:00+03:00"}
+    assert stock_bot.has_recent_successful_check(state, now)
+
+
+def test_next_primary_run_is_not_skipped() -> None:
+    now = datetime(2026, 8, 26, 12, 22, tzinfo=TZ)
+    state = {"last_successful_market_check": "2026-08-26T12:07:00+03:00"}
+    assert not stock_bot.has_recent_successful_check(state, now)
+
+
+def test_invalid_success_timestamp_does_not_block_run() -> None:
+    now = datetime(2026, 8, 26, 12, 12, tzinfo=TZ)
+    assert not stock_bot.has_recent_successful_check({}, now)
+    assert not stock_bot.has_recent_successful_check(
+        {"last_successful_market_check": "invalid"},
+        now,
+    )
+
+
 def test_due_report_is_sent_once() -> None:
     now = datetime(2026, 8, 26, 11, 17, tzinfo=TZ)
     assert stock_bot.due_report_slots(now, set()) == ["11:00"]
