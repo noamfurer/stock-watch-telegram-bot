@@ -2,9 +2,12 @@ name: Stock monitor
 
 on:
   schedule:
+    # Primary runs avoid the beginning of the hour, when GitHub Actions is busiest.
+    # Backup runs start five minutes later and skip market work after a recent success.
     # Telegram subscriptions are processed all day. Market data is requested only
     # Monday-Friday, 10:00-18:00 in Asia/Jerusalem.
-    - cron: "*/15 * * * *"
+    - cron: "7,22,37,52 * * * *"
+    - cron: "12,27,42,57 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -25,6 +28,7 @@ jobs:
       WATCHLIST_JSON: ${{ secrets.WATCHLIST_JSON }}
       ALERT_THRESHOLD_PERCENT: ${{ secrets.ALERT_THRESHOLD_PERCENT }}
       STATE_ENCRYPTION_KEY: ${{ secrets.STATE_ENCRYPTION_KEY }}
+      FORCE_MONITOR_RUN: ${{ github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Check out repository
@@ -56,6 +60,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add runtime_state.enc
-          git commit -m "Update encrypted monitor state"
+          git commit -m "Update encrypted monitor state [skip ci]"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
