@@ -22,7 +22,7 @@ function store() {
 }
 
 export function requiredNetlifyEnv(name: string): string {
-  const value = Netlify.env.get(name)?.trim();
+  const value = (typeof Netlify !== "undefined" ? Netlify.env.get(name) : process.env[name])?.trim();
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
