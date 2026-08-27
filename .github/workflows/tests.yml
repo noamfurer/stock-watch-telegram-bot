@@ -27,3 +27,15 @@ jobs:
 
       - name: Run tests
         run: PYTHONPATH=. pytest -q
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Netlify function dependencies
+        run: npm ci
+
+      - name: Type-check Netlify functions
+        run: npm run check

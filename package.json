@@ -1,0 +1,19 @@
+{
+  "name": "stock-watch-telegram-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.9",
+    "@netlify/functions": "^4.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
