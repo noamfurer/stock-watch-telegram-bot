@@ -14,7 +14,7 @@ export default async (request: Request): Promise<Response> => {
   try {
     const health = await loadHealth();
     if (!health.initialized) return Response.json({ ok: false, initialized: false }, { status: 503 });
-    const [{ token }, subscribers] = await Promise.all([loadConfig(), loadSubscribers()]);
+    const [{ config, token }, subscribers] = await Promise.all([loadConfig(), loadSubscribers()]);
     const webhook = await getWebhookInfo(token);
     const expected = `${new URL(request.url).origin}/api/telegram`;
     const webhookOk = webhook.url === expected && !webhook.last_error_message;
@@ -24,6 +24,7 @@ export default async (request: Request): Promise<Response> => {
       webhook: webhookOk,
       pending_updates: webhook.pending_update_count ?? 0,
       enabled_subscribers: Object.values(subscribers.subscribers).filter((subscriber) => subscriber.enabled).length,
+      watchlist_count: config.watchlist.length,
       last_market_check: health.last_market_check ?? null,
       last_market_check_israel: israelTimestampOrNull(health.last_market_check),
       last_primary_success: health.last_primary_success ?? null,
